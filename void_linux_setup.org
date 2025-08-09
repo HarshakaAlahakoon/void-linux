@@ -1,0 +1,423 @@
+=========================================
+Void Linux Setup Guide with Btrfs and EFI
+=========================================
+
+1. Setup wireless with wpa_cli:
+   ```
+    $ wpa_cli
+    > scan
+    > scan_results
+    > add_network 0
+    > set_network 0 ssid "YourSSID"
+    > set_network 0 psk "YourPassword"
+    > enable_network 0
+    > save_config
+    > quit
+   ```
+2. If you want to use a remote shell for the installtion, get the IP address, and ssh into the device:
+   ```
+    ssh anon@<device-ip>
+    # password: voidlinux
+
+    [anon@voidlinux ~]$ sudo su -
+    [root@voidlinux ~]# bash
+   ```
+
+   Then As root:
+   ```
+    # If you are using Ghostty or any other new/unsupported terminal,
+    export TERM=xterm-256color
+    export DISK=/dev/nvme1n1  # Change this to your SSD device
+    alias ll='ls -la --color=auto'
+   ```
+
+3. Update the system:
+   ```
+    [root@voidlinux ~]# xbps-install -Syu
+    [root@voidlinux ~]# xbps-install -u -y xbps
+    [root@voidlinux ~]# xbps-install -y parted tmux vim
+   ```
+
+3. Partition Creation (cfdisk/fdisk)
+	•	Identify your SSD device (`lsblk`).
+	•	Start partition tool: `cfdisk /dev/nvme1n1` (or your device).
+	•	Create partitions as above.
+	•	Format EFI as `vfat`, all others as btrfs.
+
+  - Structure:
+      1. ESP - 5GB
+      2. Swap - 64GB
+      3. root - is 150GB too much?
+      4. home - how about 100 GB?
+      5. smithy - my working space, set it to 200GB
+      6. containers - may be 200GB?
+      7. games - the rest of it (make the command to select the rest, not by calculating)
+
+  ```
+  # 1. Create new/delete the existing partition table (CAUTION: this wipes all partitions!)
+  parted --script ${DISK} mklabel gpt
+
+  # 2. ESP (EFI System Partition) - 5GB, FAT32, boot flag
+  parted --script ${DISK} mkpart ESP fat32 1MiB 5120MiB
+  parted --script ${DISK} name 1 ESP
+  parted --script ${DISK} set 1 boot on
+
+  # 3. Swap - 64GB
+  parted --script ${DISK} mkpart primary linux-swap 5121MiB 70656MiB
+  parted --script ${DISK} name 2 swap
+
+  # 4. Root - 150GB
+  parted --script ${DISK} mkpart primary btrfs 70657MiB 224256MiB
+  parted --script ${DISK} name 3 root
+
+  # 5. Home - 100GB
+  parted --script ${DISK} mkpart primary btrfs 224257MiB 326656MiB
+  parted --script ${DISK} name 4 home
+bash-5.2# 
+  # 6. Smithy (working space) - 200GB
+  parted --script ${DISK} mkpart primary btrfs 326657MiB 531456MiB
+  parted --script ${DISK} name 5 smithy
+
+  # 7. Containers - 200GB
+  parted --script ${DISK} mkpart primary btrfs 531457MiB 736256MiB
+  parted --script ${DISK} name 6 containers
+
+  # 8. Games - rest of SSD space
+  parted --script ${DISK} mkpart primary btrfs 736257MiB 100%
+  parted --script ${DISK} name 7 games
+
+  # 9. Print partition table
+  parted ${DISK} print
+
+  ```
+
+  4. Format Partitions
+   ```
+    # 1. ESP (EFI System Partition) - FAT32, required for UEFI boot
+    mkfs.vfat -F32 ${DISK}p1
+
+    # 2. Swap Partition
+    mkswap ${DISK}p2
+
+    # 3. Root - Btrfs
+    mkfs.btrfs -f -L root ${DISK}p3
+
+    # 4. Home - Btrfs
+    mkfs.btrfs -f -L home ${DISK}p4
+
+    # 5. Smithy (Working Space) - Btrfs
+    mkfs.btrfs -f -L smithy ${DISK}p5
+
+    # 6. Containers - Btrfs
+    mkfs.btrfs -f -L containers ${DISK}p6
+
+    # 7. Games - Btrfs (rest of SSD)
+    mkfs.btrfs -f -L games ${DISK}p7
+
+   ```
+
+  5. Activate Swap
+    ```
+      swapon ${DISK}p2
+    ```
+
+  6. Create the Snapper-Compatible Subvolumes (on root ONLY)
+    ```
+    mount ${DISK}p3 /mnt
+    btrfs subvolume create /mnt/@         # root
+    btrfs subvolume create /mnt/@home     # home
+    btrfs subvolume create /mnt/@var_log  # for logs
+    btrfs subvolume create /mnt/@snapshots
+    btrfs subvolume create /mnt/@smithy   # working space
+    btrfs subvolume create /mnt/@containers # containers
+    btrfs subvolume create /mnt/@games    # games
+    # umount /mnt
+    ```
+
+  7. Mount File Systems
+    ```
+    # Mount root subvolume:
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async ${DISK}p3 /mnt
+    # mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async,subvol=@ ${DISK}p3 /mnt
+
+    # Make mount points for others:
+    mkdir -p /mnt/{home,smithy,containers,games,.snapshots,boot/efi, var/log}
+
+    # Mount others:
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async ${DISK}p4 /mnt/home
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async,subvol=@snapshots ${DISK}p3 /mnt/.snapshots
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async,subvol=@var_log ${DISK}p3 /mnt/var/log
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async ${DISK}p5 /mnt/smithy
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async ${DISK}p6 /mnt/containers
+    mount -o compress=zstd,noatime,ssd,space_cache=v2,discard=async ${DISK}p7 /mnt/games
+    mount ${DISK}p1 /mnt/boot/efi
+    swapon ${DISK}p2
+
+    # Now try:
+    lsblk -f
+    # and/or
+    findmnt
+    # and/or
+    btrfs subvolume list /mnt
+
+    ```
+
+  8. Install Base System
+    ```
+    export ARCH=x86_64
+    export REPO=https://repo-default.voidlinux.org/current
+    mkdir -p /mnt/var/db/xbps/keys
+    cp /var/db/xbps/keys/* /mnt/var/db/xbps/keys/
+    XBPS_ARCH=$ARCH xbps-install -S -y -r /mnt -R "$REPO" base-system sudo vim git NetworkManager btrfs-progs base-devel efibootmgr mtools dosfstools grub-btrfs grub-x86_64-efi elogind dbus void-repo-nonfree linux linux-firmware curl wget neovim wpa_supplicant efibootmgr grub-btrfs grub-btrfs-runit snapper
+    ```
+
+  9. Create fstab
+    ```
+      xgenfstab -U /mnt >> /mnt/etc/fstab
+    ```
+
+  10. Chroot into the new system
+      ```
+      mount --rbind /dev /mnt/dev
+      mount --rbind /sys /mnt/sys
+      mount --rbind /proc /mnt/proc
+      mount --rbind /run /mnt/run
+      cp /etc/resolv.conf /mnt/etc/
+      chroot /mnt /bin/bash
+       ```
+
+  11. Configure the System
+       ```
+        # Set the timezone
+        ln -sf /usr/share/zoneinfo/Australia/Melbourne /etc/localtime
+        # Set localte
+        vim /etc/locale.conf
+        # Uncomment the desired locale, en_US.UTF-8 UTF-8
+        vim /etc/default/libc-locales
+        # Set hostname
+        echo "void" > /etc/hostname
+       ```
+
+  12. Configure Network
+      ```
+        # /etc/hosts
+        127.0.0.1        localhost
+        ::1              localhost
+        127.0.1.1        void 
+
+       ```
+       TODO: DNS resolution ???
+
+  13. Change root password
+      ```
+      passwd
+      ```
+
+  14. Create a user
+      ```
+      useradd -mG wheel -s /bin/bash harsh
+      passwd harsh
+      ```
+
+      Add user to sudoers:
+      ```
+       EDITOR=vim visudo
+      ```
+
+      Uncomment the line:
+      ```
+       %wheel ALL=(ALL:ALL) ALL
+      ```
+
+  15. Install and Configure Bootloader
+      ```
+       grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id="Void Linux"
+       grub-mkconfig -o /boot/grub/grub.cfg
+       ```
+
+  16. Enable Services & Desktop Environment
+      ```
+       # If you want KDE
+       xbps-install -y plasma-desktop
+
+      ```
+
+  17. Reconfigure
+       ```
+       xbps-reconfigure -f glibc-locales
+       ln -s /etc/sv/dbus /etc/runit/runsvdir/default/
+       ln -s /etc/sv/{sddm,snapperd,grub-btrfs,dbus,NetworkManager,sshd} /etc/runit/runsvdir/default/
+       ```
+    
+  18. Reboot
+      ```
+      exit  # Exit chroot
+      umount -R /mnt  # Unmount all partitions
+      reboot
+      ```
+
+  19. Post-installation Snapper Setup
+      ```
+      sudo umount /.snapshots/
+      sudo rm -r /.snapshots
+
+      # Create snapper root config
+      sudo snapper -c root create-config /
+
+      # Change ALLOW_USERS="" for ALLOW_USERS="NAMEOFUSER", in this case "harsh"
+      sudo vim /etc/snapper/configs/root 
+
+
+      sudo btrfs subvolume delete /.snapshots
+      sudo mkdir /.snapshots
+      sudo mount -a
+
+      # Change the permission of the folder
+      sudo chmod a+rx /.snapshots 
+
+      # NOTE: Following step caused an error when creating the test snapshot, so I commented it out.
+      # TODO: Check this later.
+      # Change the permission of the user
+      #sudo chown harsh /.snapshots 
+
+      # Verify the creation of the snapshots
+      snapper -c root list
+      #Create a test snapshot
+      sudo snapper -c root create -c timeline -d "Test snapshot"
+      # Listed again with the last created snapshot
+      snapper -c root list
+      # Or..
+      snapper ls
+      # Delete the test snapshot
+      sudo snapper delete 1 
+
+      # Automating with cronie
+      sudo xbps-install cronie -y
+      sudo ln -s /etc/sv/{cronie,crond} /var/service
+
+      # Use grub-btrfs to be able boot in snapshots
+      sudo /etc/grub.d/41_snapshots-btrfs
+      sudo grub-mkconfig -o /boot/grub/grub.cfg 
+      # grub now should display snapshots in bootmenu
+      ```
+
+      NOTE: <start>
+      (Do not do in the installation, these are notes for later operations)
+      These snapshots are read_only, that means you can read it, but not make changes, to make it writable do the folowing:
+      See the properties of the selected snapshot:
+      ```
+      btrfs property list /.snapshots/1/snapshot # Here we select the number 1, you can select any you want
+      ```
+
+      Make it writable:
+      ```
+      btrfs property set -ts /.snapshots/1/snapshot ro false
+      ```
+
+      Boot in the selected snapshot from grub bootloader and create a file inside of the snapshot
+      NOTE: <end>
+  
+  19. Post-Installation Setup
+
+      Setup Bluetooth:
+      ```
+      sudo xbps-install bluez -y
+      # (will need bluez-alsa for ALSA users, and libspa-bluetooth for PipeWire users. Also enable `bluetoothd` service)
+      sudo ln -s /etc/sv/bluetoothd /var/service/
+      sudo usermod -aG bluetooth harsh
+      ```
+
+      Setup Virtualization
+      ```
+      sudo xbps-install virt-manager virt-manager-tools
+      ```
+
+      Setup Fish shell
+      ```
+      sudo xbps-install fish-shell zoxide thefuck python3-distutils-extra
+      chsh -s /usr/bin/fish harsh
+      ```
+
+
+      Packages:
+        intel-ucode (or amd-ucode for AMD CPUs)
+        curl
+        xtools
+        brightnessctl
+        sof-firmware
+        ripgrep
+        lua-language-server
+        fish-shell
+        thefuck
+        zoxide
+        python3-distutils-extra
+        nerd-fonts (optional, for better terminal fonts)
+        ghostty (optional)
+        fastfetch (optional)
+        kde-plasma (installed and removed bunch of other packages to get to work: xorg, wayland-protocols, waylan-utils)
+        kde-baseapps (optional)
+        pulseaudio (or pipewire ?)
+        chromium
+        chromium-widevine
+
+
+  20. Fix ownership for seperate partitions (run as root)
+      ```
+      chown harsh:harsh /smithy
+      chown harsh:harsh /containers
+      chown harsh:harsh /games
+      ```
+
+  21. Dev setups:
+      
+      - Setup Python environment:
+        Python3 will be installed by default, but you can install additional packages:
+        ```
+        sudo xbps-install python3-pip python3-virtualenv
+
+        # For neovim mutagen support:
+        sudo xbps-install python3-watchdog
+
+        pip install pypisearch
+        ```
+      ```
+
+  21. Setup xbps-src for building packages (as normal user)
+      ```
+      cd /smithy
+      git clone https://github.com/void-linux/void-packages.git
+      cd void-packages
+      ./xbps-src binary-bootstrap
+      echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
+      ```
+
+      1password build and setup (you need to have the template file):
+      ```
+      cd /smithy/void-packages
+      ./xbps-src pkg 1password
+      xi 1password
+      sudo cp /opt/1Password/resources/1password.desktop /usr/share/applications/
+      ```
+
+      Enable 1Password SSH agent using 1Password's settings menu,
+      then add the following to your `~/.ssh.config` file to use 1Password SSH agent with GitHub:
+      ```
+      # NOTE: harsh:: `mygit` should be the hostname of the remote git url in local clone.
+      # Otherwise, it will not work. ex: git@mygit:MyGitUsername/myrepo.git
+      Host mygit
+          HostName github.com
+          IdentityAgent ~/.1password/agent.sock
+      ```
+
+      
+
+      Brave browser build and setup (you need to have the template file):
+      ```
+      cd /smithy/void-packages
+      ./xbps-src pkg brave-bin 
+      xi brave-bin 
+
+      # You might also need to copy the desktop file to the applications directory
+      sudo cp /usr/share/applications/brave-browser.desktop /usr/share/applications/
+      ```
+
