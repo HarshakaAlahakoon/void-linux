@@ -2,6 +2,8 @@
 Void Linux Setup Guide with Btrfs and EFI
 =========================================
 
+Main Reference: https://gist.github.com/itzk0tlin/91d1368cb4b366c039508da4e31d04d7
+
 1. Setup wireless with wpa_cli:
    ```
     $ wpa_cli
@@ -350,6 +352,7 @@ bash-5.2#
         fish-shell
         thefuck
         zoxide
+        lazygit
         python3-distutils-extra
         nerd-fonts (optional, for better terminal fonts)
         ghostty (optional)
@@ -359,6 +362,17 @@ bash-5.2#
         pulseaudio (or pipewire ?)
         chromium
         chromium-widevine
+        # Erlang build dependancies ==== <start>
+        apache-fop
+        ncurses-devel
+        openssl-devel
+        MesaLib-devel
+        glu-devel
+        openjdk11
+        wxWidgets
+        wxWidgets-devel
+        
+        # Erlang build dependancies ==== <end>
 
 
   20. Fix ownership for seperate partitions (run as root)
@@ -366,20 +380,6 @@ bash-5.2#
       chown harsh:harsh /smithy
       chown harsh:harsh /containers
       chown harsh:harsh /games
-      ```
-
-  21. Dev setups:
-      
-      - Setup Python environment:
-        Python3 will be installed by default, but you can install additional packages:
-        ```
-        sudo xbps-install python3-pip python3-virtualenv
-
-        # For neovim mutagen support:
-        sudo xbps-install python3-watchdog
-
-        pip install pypisearch
-        ```
       ```
 
   21. Setup xbps-src for building packages (as normal user)
@@ -390,7 +390,72 @@ bash-5.2#
       ./xbps-src binary-bootstrap
       echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
       ```
+  
+  22. Dev setups:
+      
+      - Setup Python environment:
+        Python3 will be installed by default, but you can install additional packages:
+        ```
+        sudo xbps-install python3-pip python3-virtualenv
 
+        # For neovim mutagen support:
+        sudo xbps-install python3-watchdog
+        ```
+      - Setup `asdf` for managing multiple language versions:
+        ```
+        cd /smithy/void-packages
+        ./xbps-src pkg asdf
+        xi asdf
+
+        mkdir /smithy/.asdf
+        ```
+        Add the following to ~/.config/fish/config.fish (if not already present):
+        ```fish
+        # ASDF configuration code
+        if test -z $ASDF_DATA_DIR
+            set _asdf_shims "$HOME/.asdf/shims"
+        else
+            set _asdf_shims "$ASDF_DATA_DIR/shims"
+        end
+
+        # Do not use fish_add_path (added in Fish 3.2) because it
+        # potentially changes the order of items in PATH
+        if not contains $_asdf_shims $PATH
+            set -gx --prepend PATH $_asdf_shims
+        end
+        set --erase _asdf_shims
+        ```
+
+        - Setup JDK 11 (needed for Erlang build):
+          We previously installed openjdk11, but need to set it up in fish shell path.
+          Add the following to ~/.config/fish/config.fish:
+          ```fish
+          set -gx PATH /usr/lib/jvm/openjdk11/bin $PATH
+
+          ```
+
+        - Setup Erlang and Elixir:
+        ```
+        # Erlang build process looks for wx-config, but we only have wx-config-gtk3
+        # Therefore, first check if wx-config exists:
+        which wx-config
+        # If it does not exist, create a symlink to wx-config-gtk3
+        sudo ln -s /usr/bin/wx-config-gtk3 /usr/local/bin/wx-config
+
+        asdf plugin add erlang
+        asdf install erlang 28.0    # Or any other version you need
+        # Set the global version of Erlang (optional)
+        asdf set -u erlang 28.0
+
+        asdf plugin add elixir
+        asdf install elixir 1.18.4-otp-28   # Or any other version you need, but make sure it matches the Erlang version
+        # Set the global version of Elixir (optional)
+        asdf set -u elixir 1.18.4-otp-28
+
+        ```
+
+
+  23. Setup 1Password and Brave browser (optional, as normal user)
       1password build and setup (you need to have the template file):
       ```
       cd /smithy/void-packages
