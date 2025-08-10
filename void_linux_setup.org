@@ -463,6 +463,11 @@ bash-5.2#
       xi 1password
       sudo cp /opt/1Password/resources/1password.desktop /usr/share/applications/
       ```
+      
+      If the 1password icon is not shown in start menu, dmenu etc. then edit the desktop file and set the icon property to:
+      ```
+      Icon=/opt/1Password/resources/icons/hicolor/512x512/apps/1password.png
+      ```
 
       Enable 1Password SSH agent using 1Password's settings menu,
       then add the following to your `~/.ssh.config` file to use 1Password SSH agent with GitHub:
@@ -485,4 +490,19 @@ bash-5.2#
       # You might also need to copy the desktop file to the applications directory
       sudo cp /usr/share/applications/brave-browser.desktop /usr/share/applications/
       ```
+
+      Zen Browser Setup:
+        TODO: Create/Fix xbps-src template file for this.
+        Dowload the AppImage from github, and place it in `/opt/zen-browser/`.
+        Copy a logo from "https://github.com/zen-browser/desktop/tree/dev/configs/branding/release" to the same install destination.
+        Create `/usr/share/applications/zen-browser.desktop` file and add the following to it:
+        ```
+        [Desktop Entry]
+        Name=Zen Browser
+        Exec=/opt/zen-browser/zen-x86_64.AppImage
+        Icon=/opt/zen-browser/logo.png
+        Type=Application
+        Categories=Network;WebBrowser;
+        ```
+
 
